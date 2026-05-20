@@ -531,3 +531,15 @@ with tab3:
     #### ⚡ 2. 비행 가속도 역학 노이즈 제거
     드론 측량선 끝자락에서 다음 진행 라인으로 급격히 회전(Turnaround)할 때 롤링/피칭 움직임이 최대화되고 센서에 심각한 관성 왜곡이 동반됩니다.
     - *Spike Reject*: 연속된 신호 간의 점진 도약율($\Delta \text{nT}$) 강도를 평가하여 기계 가속 관성 스파이크를 분리해서 거릅니다.
+    - *Velocity Filter*: 순간 이동 속도 변화를 추적하여 물리적 가속 임계 구간인 가상 모서리 측량 지점을 필터 기각 영역으로 판단합니다.
+    
+    #### 🌍 3. 지구 배경 자기장 제거 (Diurnal & IGRF Background Removal)
+    지구 본래의 자기장(국내 기준 통상 48,000 ~ 50,000 nT 수준)은 광물 등 지하지질 이상체의 반응 세기(대개 10 ~ 1,000 nT 내외)에 비해 훨씬 지배적입니다. 따라서 이 배경값을 빼주지 않으면 지하 지질 구조를 시각화할 수 없습니다.
+    $$\text{Magnetic Residual (nT)} = \text{Calibrated Reading} - \text{Baseline Field}$$
+    
+    #### 🗺️ 4. 지질 공간 등고선 보간 (Geological Map Grid Interpolation)
+    드론은 탐사 라인을 따라서 좁고 길게 관측 지점을 남기므로, 조사 라인 사이사이의 관측 공백 영역이 매우 넓게 남습니다. 이 이질적인 좌표 포인트들을 **Scipy Griddata** 모듈의 공간 보간 격자화 연산을 이용해 부드러운 다차원 지각 분포로 채워 주어 균일한 2D 지질 해석용 도면을 획득합니다.
+    """)
+
+st.sidebar.markdown("---")
+st.sidebar.caption("🎯 Developed for Geophysical Flight Operations • v1.2.1")

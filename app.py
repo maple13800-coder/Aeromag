@@ -128,40 +128,62 @@ def generate_synthetic_data():
 
 def load_data(file_source):
     """
-    사용자가 업로드한 CSV 자력 탐사 데이터를 정형화하여 로드합니다.
-    좌표계 명칭과 자력 세기 열을 감지하여 통일시킵니다.
+    사용자가 업로드한 CSV, DAT, TXT 자력 탐사 데이터를 정형화하여 로드합니다.
+    공백, 탭, 쉼표 구분자 및 파일 상단의 메타데이터 헤더를 자동으로 인식하고 우회하여 파싱합니다.
     """
     try:
-        df = pd.read_csv(file_source)
-        # 다양한 열 이름을 표준 열 이름으로 자동 매핑
-        rename_dict = {}
-        for col in df.columns:
-            col_lower = col.strip().lower()
-            if col_lower in ['x', 'east', 'easting', 'longitude', 'lon']:
-                rename_dict[col] = 'x'
-            elif col_lower in ['y', 'north', 'northing', 'latitude', 'lat']:
-                rename_dict[col] = 'y'
-            elif col_lower in ['mag', 'magnetic', 'intensity', 'nt', 'field']:
-                rename_dict[col] = 'magnetic'
-            elif col_lower in ['time', 'timestamp', 'utc']:
-                rename_dict[col] = 'time'
-            elif col_lower in ['heading', 'dir', 'direction']:
-                rename_dict[col] = 'heading'
-                
-        df = df.rename(columns=rename_dict)
+        # 업로드 파일에서 원시 바이트 읽기
+        bytes_data = file_source.read()
         
-        # 필수 칼럼 검증
-        required = {'x', 'y', 'magnetic'}
-        missing = required - set(df.columns)
-        if missing:
-            raise ValueError(f"필수 좌표 또는 자력 필드 칼럼이 부족합니다: {missing}")
+        # 파일 포인터를 다시 처음으로 초기화
+        if hasattr(file_source, 'seek'):
+            file_source.seek(0)
             
-        df['x'] = df['x'].astype(float)
-        df['y'] = df['y'].astype(float)
-        df['magnetic'] = df['magnetic'].astype(float)
+        # 인코딩 처리 (한글 완성형 cp949 지원 추가)
+        try:
+            content = bytes_data.decode('utf-8')
+        except UnicodeDecodeError:
+            content = bytes_data.decode('cp949', errors='ignore')
         
-        # 시간 정보가 없는 경우 가상 일련번호 부여
-        if 'time' not in df.columns:
+        lines = content.splitlines()
+        
+        # 스마트 수치 행 추출 필터 가동
+        data_rows = []
+        for line in lines:
+            line = line.strip()
+            # 비어있는 라인이거나 명시적 주석(#, *) 스킵
+            if not line or line.startswith('#') or line.startswith('*') or line.startswith('-'):
+                continue
+                
+            # 쉼표를 공백으로 치환 후 토큰 분리하여 공백/쉼표 모두 연동 지원
+            tokens = line.replace(',', ' ').split()
+            if len(tokens) >= 3:
+                try:
+                    # 첫 3개 항목이 모두 물리적 유효 숫자인지 체크 (헤더 텍스트 스킵 핵심 로직)
+                    val1 = float(tokens[0])
+                    val2 = float(tokens[1])
+                    val3 = float(tokens[2])
+                    row = [val1, val2, val3]
+                    
+                    # 4번째 데이터가 시간 정보 등 숫자로 수집되었을 경우 선택적 보완
+                    if len(tokens) >= 4:
+                        try:
+                            row.append(float(tokens[3]))
+                        except ValueError:
+                            pass
+                    data_rows.append(row)
+                except ValueError:
+                    # 헤더 텍스트, 알파벳, 구분선 등은 예외 처리되어 자동 필터링됩니다.
+                    continue
+                    
+        if len(data_rows) == 0:
+            raise ValueError("탐사 파일 내에서 추출 가능한 유효한 수치 데이터 행을 찾지 못했습니다.")
+            
+        # 데이터프레임 표준 형식 구축
+        if len(data_rows[0]) == 4:
+            df = pd.DataFrame(data_rows, columns=['x', 'y', 'magnetic', 'time'])
+        else:
+            df = pd.DataFrame(data_rows, columns=['x', 'y', 'magnetic'])
             df['time'] = np.arange(len(df), dtype=float)
             
         return df, None
@@ -404,10 +426,11 @@ with tab1:
     col1, col2 = st.columns([1, 1])
     
     with col1:
+        # csv뿐만 아니라 사용자의 dat, txt 확장자 선택도 가능하게 연동
         uploaded_file = st.file_uploader(
-            "자력 탐사 파일(CSV) 업로드", 
-            type=["csv"],
-            help="구조 좌표 'x', 'y' 및 자기장 세기 필드인 'magnetic' 칼럼이 필수로 요구됩니다."
+            "자력 탐사 파일(CSV, DAT, TXT) 업로드", 
+            type=["csv", "dat", "txt"],
+            help="구조 좌표 'x', 'y' 및 자기장 세기 필드인 'magnetic' 칼럼이 필수로 요구됩니다. 공백으로 구분된 비행 텍스트(.dat) 포맷도 스마트 인식합니다."
         )
     
     with col2:
@@ -420,11 +443,11 @@ with tab1:
     if uploaded_file is not None:
         df_loaded, err_msg = load_data(uploaded_file)
         if err_msg:
-            st.error(f"CSV 구조 적합성 검증 실패: {err_msg}")
+            st.error(f"데이터셋 구조 분석 및 자동 파싱 실패: {err_msg}")
         else:
             st.session_state['raw_data'] = df_loaded
             st.session_state['synthetic_generated'] = False
-            st.success("업로드된 사용자 CSV 탐사 데이터를 성공적으로 파싱 및 완료하였습니다.")
+            st.success("사용자 원시 탐사 데이터 수집 및 스마트 정규화 연산을 마쳤습니다.")
             
     if st.session_state['raw_data'] is not None:
         raw_df = st.session_state['raw_data']
